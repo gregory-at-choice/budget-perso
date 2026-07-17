@@ -239,6 +239,25 @@ button { font-family: inherit; }
 .input.color { height: 42px; padding: 4px; }
 select.input { appearance: none; -webkit-appearance: none; background-image: none; }
 
+/* ---- Synchronisation Google Drive ---- */
+.sync-line { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.sync-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted-strong); flex-shrink: 0; }
+.sync-dot.ok { background: var(--positive); }
+.sync-dot.busy { background: var(--accent); animation: pulse 1s ease-in-out infinite; }
+.sync-dot.warn { background: #f59e0b; }
+.sync-dot.err { background: var(--danger); }
+.sync-dot.idle { background: var(--muted-strong); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.badge.sync-ok { color: var(--positive); border-color: color-mix(in srgb, var(--positive) 35%, transparent); }
+.badge.sync-busy { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.badge.sync-warn { color: #b45309; }
+.badge.sync-err { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+
+.advanced { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.advanced summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+.advanced-body { margin-top: 10px; }
+
 /* ---- Modale ---- */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 100;

@@ -1,6 +1,7 @@
 // app.js — Point d'entrée : navigation, rendu des vues, formulaires.
 import * as store from './store.js';
 import { ASSET_CLASSES, assetClass } from './store.js';
+import * as drive from './drive.js';
 import {
   fmtMoney, fmtCompact, fmtPct, fmtDate, fmtMonthLabel, todayISO, currentMonth, addMonths,
   el, clear, donutChart, barChart, lineChart, legend,
@@ -621,11 +622,14 @@ function viewSettings() {
   const wrap = el('section', { class: 'view' });
   wrap.append(el('h1', { text: 'Réglages' }));
 
-  // Sauvegarde / synchronisation
-  wrap.append(card('Sauvegarde & synchronisation', el('div', {}, [
-    el('p', { class: 'muted', text: 'Tes données sont stockées uniquement sur cet appareil. Exporte un fichier pour les sauvegarder ou les transférer sur un autre appareil (ordinateur ↔ téléphone).' }),
+  // Synchronisation Google Drive
+  wrap.append(driveCard());
+
+  // Sauvegarde manuelle par fichier (complément de la synchro Drive)
+  wrap.append(card('Sauvegarde manuelle (fichier)', el('div', {}, [
+    el('p', { class: 'muted', text: 'À tout moment, tu peux exporter un fichier de sauvegarde, ou en réimporter un. Utile comme copie de secours en plus de la synchro Google Drive.' }),
     el('div', { class: 'row' }, [
-      el('button', { class: 'btn primary', text: '⬇ Exporter (.json)', onclick: doExport }),
+      el('button', { class: 'btn', text: '⬇ Exporter (.json)', onclick: doExport }),
       el('button', { class: 'btn', text: '⬆ Importer un fichier', onclick: doImport }),
     ]),
   ])));
@@ -664,8 +668,72 @@ function viewSettings() {
     } }),
   ])));
 
-  wrap.append(el('p', { class: 'footnote', text: 'Budget Perso — application locale, hors-ligne. Aucune donnée n’est envoyée sur Internet.' }));
+  const foot = drive.isConfigured()
+    ? 'Budget Perso — tes données restent sur ton appareil et, si tu l’actives, dans TON Google Drive privé. Rien n’est partagé publiquement.'
+    : 'Budget Perso — application locale, hors-ligne. Aucune donnée n’est envoyée sur Internet.';
+  wrap.append(el('p', { class: 'footnote', text: foot }));
   return wrap;
+}
+
+// --- Carte de synchronisation Google Drive --------------------------------
+function syncDotClass(s) {
+  return ({ synced: 'ok', syncing: 'busy', connecting: 'busy', offline: 'warn', error: 'err' })[s] || 'idle';
+}
+
+function driveCard() {
+  const configured = drive.isConfigured();
+  const s = drive.getStatus();
+  const body = el('div', {}, []);
+
+  body.append(el('div', { class: 'sync-line' }, [
+    el('span', { class: 'sync-dot ' + syncDotClass(s) }),
+    el('strong', { text: configured ? drive.statusLabel() : 'Synchro Google Drive non activée' }),
+  ]));
+
+  if (!configured) {
+    body.append(el('p', { class: 'muted', text: 'Active la synchro pour retrouver tes données sur tous tes appareils (ordinateur, téléphone…) via TON Google Drive. Il te faut un « identifiant client » Google, gratuit — les instructions sont fournies séparément.' }));
+    const idInput = el('input', { class: 'input', type: 'text', placeholder: 'xxxx.apps.googleusercontent.com', autocomplete: 'off', spellcheck: 'false' });
+    body.append(field('Identifiant client Google (Client ID)', idInput));
+    body.append(el('button', { class: 'btn primary', text: 'Activer et se connecter', onclick: async (e) => {
+      const id = idInput.value.trim();
+      if (!id) { idInput.focus(); return; }
+      const btn = e.currentTarget; btn.disabled = true;
+      drive.setClientId(id);
+      try { await drive.init(); await drive.connect({ silent: false }); }
+      catch (err) { alert('Connexion impossible : ' + (err?.message || err)); }
+      render();
+    } }));
+    return card('Synchronisation Google Drive', body);
+  }
+
+  if (s === 'disconnected' || s === 'error') {
+    body.append(el('button', { class: 'btn primary', text: '🔗 Se connecter à Google Drive', onclick: async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      try { await drive.connect({ silent: false }); }
+      catch (err) { alert('Connexion impossible : ' + (err?.message || err)); }
+      render();
+    } }));
+  }
+
+  if (s === 'synced' || s === 'syncing' || s === 'offline') {
+    body.append(el('p', { class: 'muted', text: 'Tes données sont enregistrées dans le fichier « budget-perso.json » de ton Google Drive. Tu peux le déplacer dans le dossier de ton choix : l’app le retrouvera automatiquement.' }));
+    body.append(el('div', { class: 'row' }, [
+      el('button', { class: 'btn', text: '🔄 Synchroniser maintenant', onclick: async () => { await drive.syncNow(); render(); } }),
+      el('button', { class: 'btn ghost', text: 'Se déconnecter', onclick: () => { drive.disconnect(); render(); } }),
+    ]));
+  }
+
+  // Réglage avancé : changer l'identifiant client
+  const advInput = el('input', { class: 'input', type: 'text', value: drive.getClientId(), autocomplete: 'off', spellcheck: 'false' });
+  body.append(el('details', { class: 'advanced' }, [
+    el('summary', { text: 'Réglage avancé : identifiant client' }),
+    el('div', { class: 'advanced-body' }, [
+      field('Client ID', advInput),
+      el('button', { class: 'btn small', text: 'Enregistrer', onclick: () => { drive.setClientId(advInput.value.trim()); render(); } }),
+    ]),
+  ]));
+
+  return card('Synchronisation Google Drive', body);
 }
 
 function doExport() {
@@ -711,10 +779,28 @@ function applyTheme() {
   else root.setAttribute('data-theme', t);
 }
 
+// --- Indicateur de synchronisation (badge de la barre latérale) -----------
+function updateSyncChip() {
+  const badge = document.querySelector('.sidebar-foot .badge');
+  if (!badge) return;
+  if (!drive.isConfigured()) {
+    badge.textContent = '🔒 100 % local';
+    badge.className = 'badge';
+    return;
+  }
+  badge.textContent = '☁ ' + drive.statusLabel();
+  badge.className = 'badge sync-' + syncDotClass(drive.getStatus());
+}
+
 // --- Démarrage ------------------------------------------------------------
 store.subscribe(() => render());
 applyTheme();
 render();
+
+// Synchronisation Google Drive : mise à jour de l'indicateur + initialisation.
+drive.onStatus(() => { updateSyncChip(); if (state.view === 'settings') { /* le statut suffit */ } });
+drive.init().then(() => { updateSyncChip(); if (state.view === 'settings') render(); });
+updateSyncChip();
 
 // Enregistrement du service worker (PWA hors-ligne).
 if ('serviceWorker' in navigator) {

@@ -1,7 +1,8 @@
 // sw.js — Service worker : met l'application en cache pour un usage hors-ligne.
-// Stratégie « cache d'abord » sur la coquille de l'app, réseau pour le reste.
+// Stratégie « cache d'abord » sur la coquille de l'app ; les appels vers d'autres
+// domaines (Google : authentification et API Drive) passent directement au réseau.
 
-const CACHE = 'budget-perso-v1';
+const CACHE = 'budget-perso-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +11,8 @@ const ASSETS = [
   './js/app.js',
   './js/store.js',
   './js/ui.js',
+  './js/drive.js',
+  './js/config.js',
   './icons/icon.svg',
 ];
 
@@ -30,19 +33,28 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+  // Laisser passer sans interférence tout ce qui n'est pas sur notre domaine
+  // (Google Identity Services, API Drive, etc.).
+  if (url.origin !== self.location.origin) return;
+
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
       return fetch(request)
         .then((resp) => {
-          // Mettre en cache les ressources same-origin récupérées avec succès.
-          if (resp.ok && new URL(request.url).origin === self.location.origin) {
+          if (resp.ok) {
             const copy = resp.clone();
             caches.open(CACHE).then((c) => c.put(request, copy));
           }
           return resp;
         })
-        .catch(() => caches.match('./index.html'));
+        .catch(() => {
+          // Hors-ligne : pour une navigation, renvoyer la coquille de l'app.
+          if (request.mode === 'navigate') return caches.match('./index.html');
+          return new Response('', { status: 504, statusText: 'Hors-ligne' });
+        });
     })
   );
 });

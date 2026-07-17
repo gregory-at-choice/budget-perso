@@ -48,6 +48,7 @@ export function assetClass(key) {
 function emptyData() {
   return {
     version: SCHEMA_VERSION,
+    updatedAt: null, // horodatage ISO de la dernière modification (pour la synchro Drive)
     settings: { currency: 'EUR', locale: 'fr-FR', theme: 'auto' },
     categories: defaultCategories(),
     transactions: [],
@@ -85,11 +86,13 @@ function migrate(d) {
     transactions: Array.isArray(d.transactions) ? d.transactions : [],
     holdings: Array.isArray(d.holdings) ? d.holdings : [],
     plans: Array.isArray(d.plans) ? d.plans : [],
+    updatedAt: d.updatedAt || null,
     version: SCHEMA_VERSION,
   };
 }
 
-function persist() {
+// Écriture bas niveau : enregistre + notifie les vues, SANS toucher à updatedAt.
+function save() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (e) {
@@ -97,6 +100,19 @@ function persist() {
     alert('Impossible d’enregistrer : le stockage du navigateur est peut-être plein.');
   }
   listeners.forEach((fn) => fn(data));
+}
+
+// Modification par l'utilisateur : on avance l'horodatage puis on enregistre.
+function persist() {
+  data.updatedAt = new Date().toISOString();
+  save();
+}
+
+// Applique des données venues de Google Drive : on conserve LEUR updatedAt
+// et on n'avance pas l'horodatage (sinon boucle de synchro).
+export function applyRemoteData(obj) {
+  data = migrate(obj);
+  save();
 }
 
 // S'abonner aux changements (les vues se re-dessinent).
