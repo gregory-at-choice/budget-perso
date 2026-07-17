@@ -25,6 +25,7 @@ let tokenExpiry = 0;
 let fileId = localStorage.getItem(LS_FILE_ID) || null;
 let lastSyncedJSON = null;
 let saveTimer = null;
+let refreshTimer = null;    // minuteur de rafraîchissement anticipé du jeton
 let wired = false;         // les abonnements ne sont posés qu'une fois
 let applyingRemote = false; // vrai pendant qu'on applique les données distantes
 let status = 'disabled'; // disabled | disconnected | connecting | syncing | synced | offline | error
@@ -94,7 +95,8 @@ function requestToken({ silent }) {
     tokenClient.callback = (resp) => {
       if (resp && resp.error) return reject(new Error(resp.error));
       accessToken = resp.access_token;
-      tokenExpiry = Date.now() + ((resp.expires_in || 3600) * 1000) - 60000;
+      tokenExpiry = Date.now() + ((resp.expires_in || 3600) * 1000);
+      scheduleTokenRefresh();
       resolve(resp);
     };
     tokenClient.error_callback = (err) => reject(err instanceof Error ? err : new Error(err?.type || 'auth_error'));
@@ -104,20 +106,40 @@ function requestToken({ silent }) {
   });
 }
 
+// Rafraîchit le jeton en arrière-plan ~5 min avant son expiration, en boucle,
+// pour garder la connexion active tant que l'app est ouverte (sans clic).
+function scheduleTokenRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const ms = Math.max(30000, tokenExpiry - Date.now() - 300000);
+  refreshTimer = setTimeout(() => {
+    ensureTokenClient()
+      .then(() => requestToken({ silent: true }))
+      .catch(() => { /* on retentera au retour sur l'app ou à la prochaine action */ });
+  }, ms);
+}
+
 async function getToken() {
-  if (accessToken && Date.now() < tokenExpiry) return accessToken;
+  // Marge de 2 min : on renouvelle avant l'expiration réelle.
+  if (accessToken && Date.now() < tokenExpiry - 120000) return accessToken;
   await ensureTokenClient();
   await requestToken({ silent: true });
   return accessToken;
 }
 
 // --- Appels REST à l'API Drive -------------------------------------------
-async function api(url, opts = {}) {
+async function api(url, opts = {}, retry = true) {
   const token = await getToken();
   const resp = await fetch(url, {
     ...opts,
     headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
   });
+  // Jeton expiré/révoqué → on en redemande un silencieusement et on réessaie une fois.
+  if (resp.status === 401 && retry) {
+    accessToken = null;
+    await ensureTokenClient();
+    await requestToken({ silent: true });
+    return api(url, opts, false);
+  }
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
     throw new Error(`Drive API ${resp.status} ${txt}`);
@@ -233,8 +255,10 @@ async function pushNow() {
 // - Si le local n'a pas de modif en attente → on adopte simplement le distant s'il diffère.
 // - Sinon (conflit) → le plus récent (updatedAt) l'emporte.
 async function resync() {
-  if (!isConfigured()) return;
-  if (status === 'disconnected' || status === 'connecting' || status === 'disabled') return;
+  // On tente même si le statut est « déconnecté » : c'est ce qui permet la
+  // reconnexion silencieuse automatique quand on revient sur l'app.
+  if (!isConfigured() || localStorage.getItem(LS_CONNECTED) !== '1') return;
+  if (status === 'connecting') return;
   if (!navigator.onLine) { setStatus('offline'); return; }
   // S'assurer d'un jeton valide (rafraîchissement silencieux).
   try { await getToken(); } catch (e) { setStatus('disconnected'); return; }
@@ -286,8 +310,8 @@ async function resync() {
 // Récupère la dernière version quand on revient sur l'app (onglet visible / focus).
 let resyncTimer = null;
 function scheduleResync() {
-  if (!isConfigured()) return;
-  if (status === 'disconnected' || status === 'connecting' || status === 'disabled') return;
+  if (!isConfigured() || localStorage.getItem(LS_CONNECTED) !== '1') return;
+  if (status === 'connecting' || status === 'syncing') return;
   if (resyncTimer) clearTimeout(resyncTimer);
   resyncTimer = setTimeout(() => { resync().catch(() => {}); }, 300);
 }
@@ -332,6 +356,7 @@ export async function connect({ silent = false } = {}) {
 }
 
 export function disconnect() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
   if (accessToken && window.google?.accounts?.oauth2) {
     try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch (e) {}
   }
