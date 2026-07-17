@@ -229,6 +229,69 @@ async function pushNow() {
   }
 }
 
+// Synchro bidirectionnelle : récupère le distant ET envoie le local, en réconciliant.
+// - Si le local n'a pas de modif en attente → on adopte simplement le distant s'il diffère.
+// - Sinon (conflit) → le plus récent (updatedAt) l'emporte.
+async function resync() {
+  if (!isConfigured()) return;
+  if (status === 'disconnected' || status === 'connecting' || status === 'disabled') return;
+  if (!navigator.onLine) { setStatus('offline'); return; }
+  // S'assurer d'un jeton valide (rafraîchissement silencieux).
+  try { await getToken(); } catch (e) { setStatus('disconnected'); return; }
+
+  setStatus('syncing');
+  try {
+    if (!fileId) fileId = await findFile();
+    const localJSON = JSON.stringify(store.getData());
+    const localDirty = localJSON !== lastSyncedJSON; // modifs locales pas encore envoyées
+
+    let remote = null;
+    if (fileId) remote = await downloadFile(fileId).catch(() => null);
+
+    if (!fileId || !remote) {
+      // Pas de fichier distant → on le crée / on pousse le local.
+      if (!fileId) { fileId = await createFile(store.getData()); localStorage.setItem(LS_FILE_ID, fileId); }
+      else { await updateFile(fileId, store.getData()); }
+      lastSyncedJSON = localJSON;
+      setStatus('synced');
+      return;
+    }
+
+    const remoteJSON = JSON.stringify(remote);
+    const remoteTime = remote.updatedAt || '';
+    const localTime = store.getData().updatedAt || '';
+
+    if (!localDirty) {
+      // Local propre → on adopte le distant s'il a changé.
+      if (remoteJSON !== localJSON && !isEmptyData(remote)) {
+        applyingRemote = true; store.applyRemoteData(remote); applyingRemote = false;
+        lastSyncedJSON = JSON.stringify(store.getData());
+      }
+    } else if (remoteTime > localTime && !isEmptyData(remote)) {
+      // Conflit, le distant est plus récent → il gagne.
+      applyingRemote = true; store.applyRemoteData(remote); applyingRemote = false;
+      lastSyncedJSON = JSON.stringify(store.getData());
+    } else {
+      // Conflit, le local est plus récent (ou distant vide) → on pousse le local.
+      await updateFile(fileId, store.getData());
+      lastSyncedJSON = localJSON;
+    }
+    setStatus('synced');
+  } catch (e) {
+    console.error('Resync échoué :', e);
+    setStatus(navigator.onLine ? 'error' : 'offline');
+  }
+}
+
+// Récupère la dernière version quand on revient sur l'app (onglet visible / focus).
+let resyncTimer = null;
+function scheduleResync() {
+  if (!isConfigured()) return;
+  if (status === 'disconnected' || status === 'connecting' || status === 'disabled') return;
+  if (resyncTimer) clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(() => { resync().catch(() => {}); }, 300);
+}
+
 // --- API publique ---------------------------------------------------------
 
 // À appeler au démarrage de l'app (et après avoir renseigné le Client ID).
@@ -236,7 +299,10 @@ async function pushNow() {
 export async function init() {
   if (!wired) {
     store.subscribe(() => scheduleSave());
-    window.addEventListener('online', () => { if (status === 'offline') scheduleSave(); });
+    window.addEventListener('online', () => { if (status === 'offline') scheduleSave(); else scheduleResync(); });
+    // Récupérer les changements de l'autre appareil quand on revient sur l'app.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') scheduleResync(); });
+    window.addEventListener('focus', () => scheduleResync());
     wired = true;
   }
   if (!isConfigured()) { setStatus('disabled'); return; }
@@ -274,8 +340,7 @@ export function disconnect() {
   setStatus('disconnected');
 }
 
-// Force une synchro manuelle (bouton « Synchroniser maintenant »).
+// Force une synchro manuelle bidirectionnelle (bouton « Synchroniser maintenant »).
 export async function syncNow() {
-  if (status === 'disabled' || status === 'disconnected' || status === 'connecting') return;
-  await pushNow();
+  await resync();
 }
