@@ -52,6 +52,7 @@ function emptyData() {
     settings: { currency: 'EUR', locale: 'fr-FR', theme: 'auto' },
     categories: defaultCategories(),
     transactions: [],
+    recurrings: [],
     holdings: [],
     plans: [],
   };
@@ -84,6 +85,7 @@ function migrate(d) {
     settings: { ...base.settings, ...(d.settings || {}) },
     categories: Array.isArray(d.categories) && d.categories.length ? d.categories : base.categories,
     transactions: Array.isArray(d.transactions) ? d.transactions : [],
+    recurrings: Array.isArray(d.recurrings) ? d.recurrings : [],
     holdings: Array.isArray(d.holdings) ? d.holdings : [],
     plans: Array.isArray(d.plans) ? d.plans : [],
     updatedAt: d.updatedAt || null,
@@ -193,6 +195,93 @@ export function transactionsForMonth(month) {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
+// --- Opérations récurrentes ----------------------------------------------
+// Un modèle récurrent génère automatiquement des transactions à échéance
+// (loyer, abonnements, salaire…). frequency : 'monthly' | 'weekly' | 'yearly'.
+
+export const FREQUENCIES = [
+  { key: 'monthly', label: 'Mensuelle' },
+  { key: 'weekly',  label: 'Hebdomadaire' },
+  { key: 'yearly',  label: 'Annuelle' },
+];
+export function frequencyLabel(key) {
+  return (FREQUENCIES.find((f) => f.key === key) || {}).label || key;
+}
+
+export function getRecurrings() {
+  return data.recurrings;
+}
+
+export function addRecurring(r) {
+  data.recurrings.push({ id: uid(), active: true, lastGenerated: null, ...r });
+  persist();
+}
+
+export function updateRecurring(id, patch) {
+  const r = data.recurrings.find((x) => x.id === id);
+  if (r) Object.assign(r, patch);
+  persist();
+}
+
+export function deleteRecurring(id) {
+  // On supprime le modèle, mais on conserve les transactions déjà générées (historique réel).
+  data.recurrings = data.recurrings.filter((r) => r.id !== id);
+  persist();
+}
+
+// --- Calcul des échéances -------------------------------------------------
+function parseYMD(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
+function toYMD(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function daysInMonth(year, monthIndex) { return new Date(year, monthIndex + 1, 0).getDate(); }
+function localTodayYMD() { return toYMD(new Date()); }
+
+// Échéance suivante après une date donnée, selon la fréquence.
+function nextOccurrence(r, dateStr) {
+  const d = parseYMD(dateStr);
+  if (r.frequency === 'weekly') { d.setDate(d.getDate() + 7); return toYMD(d); }
+  const anchorDay = Number((r.startDate || dateStr).split('-')[2]);
+  if (r.frequency === 'yearly') {
+    const y = d.getFullYear() + 1;
+    return toYMD(new Date(y, d.getMonth(), Math.min(anchorDay, daysInMonth(y, d.getMonth()))));
+  }
+  // mensuelle : même jour chaque mois, ramené au dernier jour si le mois est plus court.
+  let y = d.getFullYear(), mi = d.getMonth() + 1;
+  if (mi > 11) { mi = 0; y += 1; }
+  return toYMD(new Date(y, mi, Math.min(anchorDay, daysInMonth(y, mi))));
+}
+
+// Prochaine échéance à venir (pour affichage).
+export function nextDueDate(r) {
+  return r.lastGenerated ? nextOccurrence(r, r.lastGenerated) : (r.startDate || null);
+}
+
+// Génère toutes les transactions dues (jusqu'à aujourd'hui) pour chaque modèle actif.
+// Idempotent grâce à `lastGenerated` : ne crée jamais de doublon. Renvoie true si des
+// transactions ont été créées.
+export function generateDueRecurrings() {
+  const today = localTodayYMD();
+  let changed = false;
+  (data.recurrings || []).forEach((r) => {
+    if (r.active === false || !r.startDate) return;
+    let occ = r.lastGenerated ? nextOccurrence(r, r.lastGenerated) : r.startDate;
+    let guard = 0; // garde-fou anti-boucle (au cas où)
+    while (occ && occ <= today && guard < 600) {
+      data.transactions.push({
+        id: uid(), type: r.type, amount: +r.amount || 0,
+        categoryId: r.categoryId || null, date: occ, note: r.note || '', recurringId: r.id,
+      });
+      r.lastGenerated = occ;
+      changed = true;
+      guard += 1;
+      occ = nextOccurrence(r, occ);
+    }
+  });
+  if (changed) persist();
+  return changed;
+}
+
 // --- Investissements (portefeuille) -------------------------------------
 
 export function getHoldings() {
@@ -299,6 +388,12 @@ export function loadDemo() {
 
   d.plans = [
     { id: uid(), label: 'Versement PEA', amount: 300, expectedReturn: 6, years: 20, initial: 14200 },
+  ];
+
+  d.recurrings = [
+    { id: uid(), type: 'expense', amount: 1080, categoryId: cat('Logement'), note: 'Loyer', frequency: 'monthly', startDate: day(m0, 3), lastGenerated: day(m0, 3), active: true },
+    { id: uid(), type: 'expense', amount: 15.99, categoryId: cat('Abonnements'), note: 'Streaming', frequency: 'monthly', startDate: day(m0, 6), lastGenerated: day(m0, 6), active: true },
+    { id: uid(), type: 'income', amount: 3200, categoryId: cat('Salaire'), note: 'Salaire', frequency: 'monthly', startDate: day(m0, 1), lastGenerated: day(m0, 1), active: true },
   ];
 
   data = d;

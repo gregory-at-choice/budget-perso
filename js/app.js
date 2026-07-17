@@ -61,6 +61,7 @@ function render() {
   const view = ({
     dashboard: viewDashboard,
     transactions: viewTransactions,
+    recurring: viewRecurring,
     budgets: viewBudgets,
     investments: viewInvestments,
     plan: viewPlan,
@@ -272,7 +273,10 @@ function viewTransactions() {
 
   wrap.append(el('div', { class: 'view-head' }, [
     el('h1', { text: 'Dépenses' }),
-    el('button', { class: 'btn primary', text: '＋ Ajouter', onclick: () => txModal() }),
+    el('div', { class: 'row' }, [
+      el('button', { class: 'btn ghost', text: '🔁 Récurrentes', onclick: () => { state.view = 'recurring'; render(); } }),
+      el('button', { class: 'btn primary', text: '＋ Ajouter', onclick: () => txModal() }),
+    ]),
   ]));
 
   wrap.append(el('div', { class: 'cards mini' }, [
@@ -295,7 +299,7 @@ function viewTransactions() {
     list.append(el('div', { class: 'list-row', onclick: () => txModal(t) }, [
       el('div', { class: 'list-icon', style: `background:${(c?.color || '#94a3b8')}22`, text: c?.icon || '📦' }),
       el('div', { class: 'list-main' }, [
-        el('div', { class: 'list-title', text: t.note || c?.name || 'Opération' }),
+        el('div', { class: 'list-title', text: (t.recurringId ? '🔁 ' : '') + (t.note || c?.name || 'Opération') }),
         el('div', { class: 'list-sub', text: (c?.name || 'Sans catégorie') + ' · ' + fmtDate(t.date) }),
       ]),
       el('div', { class: 'list-amount ' + (t.type === 'income' ? 'positive' : 'negative'),
@@ -347,6 +351,110 @@ function txModal(tx) {
       if (!(val > 0)) { amount.focus(); return; }
       const payload = { type: typeSel.value, amount: val, categoryId: catSel.value || null, date: date.value || todayISO(), note: note.value.trim() };
       if (isEdit) store.updateTransaction(tx.id, payload); else store.addTransaction(payload);
+      modal.close();
+    },
+  });
+}
+
+// =========================================================================
+// VUE : OPÉRATIONS RÉCURRENTES
+// =========================================================================
+function viewRecurring() {
+  const wrap = el('section', { class: 'view' });
+  wrap.append(el('div', { class: 'view-head' }, [
+    el('div', { class: 'row' }, [
+      el('button', { class: 'icon-btn', text: '‹', 'aria-label': 'Retour', onclick: () => { state.view = 'transactions'; render(); } }),
+      el('h1', { text: 'Opérations récurrentes' }),
+    ]),
+    el('button', { class: 'btn primary', text: '＋ Ajouter', onclick: () => recurringModal() }),
+  ]));
+
+  const recs = store.getRecurrings();
+  if (!recs.length) {
+    wrap.append(el('div', { class: 'card empty-card' }, [
+      el('p', { text: 'Automatise tes opérations qui reviennent : loyer, abonnements, salaire… Elles seront créées toutes seules à chaque échéance.' }),
+      el('button', { class: 'btn primary', text: '＋ Créer une récurrence', onclick: () => recurringModal() }),
+    ]));
+    return wrap;
+  }
+
+  const list = el('div', { class: 'card list' });
+  recs.slice().sort((a, b) => (a.note || '').localeCompare(b.note || '')).forEach((r) => {
+    const c = store.getCategory(r.categoryId);
+    const due = store.nextDueDate(r);
+    const inactive = r.active === false;
+    list.append(el('div', { class: 'list-row' + (inactive ? ' muted-row' : ''), onclick: () => recurringModal(r) }, [
+      el('div', { class: 'list-icon', style: `background:${(c?.color || '#94a3b8')}22`, text: c?.icon || '🔁' }),
+      el('div', { class: 'list-main' }, [
+        el('div', { class: 'list-title', text: r.note || c?.name || 'Récurrence' }),
+        el('div', { class: 'list-sub', text: store.frequencyLabel(r.frequency) + (inactive ? ' · en pause' : (due ? ' · prochaine : ' + fmtDate(due) : '')) }),
+      ]),
+      el('div', { class: 'list-amount ' + (r.type === 'income' ? 'positive' : 'negative'),
+        text: (r.type === 'income' ? '+ ' : '− ') + fmtMoney(r.amount) }),
+    ]));
+  });
+  wrap.append(list);
+  wrap.append(el('p', { class: 'footnote', text: 'Les opérations sont créées automatiquement à l’ouverture de l’app, à chaque échéance passée. Elles apparaissent alors dans « Dépenses » avec le repère 🔁.' }));
+  return wrap;
+}
+
+function recurringModal(r) {
+  const isEdit = !!r;
+  const cats = store.getCategories();
+  const typeSel = el('select', { class: 'input' },
+    [el('option', { value: 'expense', text: 'Dépense' }), el('option', { value: 'income', text: 'Revenu' })]);
+  typeSel.value = r?.type || 'expense';
+
+  const amount = el('input', { class: 'input', type: 'number', step: '0.01', min: '0', inputmode: 'decimal', placeholder: '0,00', value: r?.amount ?? '' });
+  const note = el('input', { class: 'input', type: 'text', placeholder: 'Ex. Loyer, Netflix, Salaire…', value: r?.note || '' });
+
+  const freqSel = el('select', { class: 'input' },
+    store.FREQUENCIES.map((f) => el('option', { value: f.key, text: f.label })));
+  freqSel.value = r?.frequency || 'monthly';
+
+  const startDate = el('input', { class: 'input', type: 'date', value: r?.startDate || todayISO() });
+
+  const catSel = el('select', { class: 'input' });
+  function fillCats() {
+    clear(catSel);
+    cats.filter((c) => c.type === typeSel.value).forEach((c) =>
+      catSel.append(el('option', { value: c.id, text: `${c.icon} ${c.name}` })));
+    if (r?.categoryId && cats.find((c) => c.id === r.categoryId)?.type === typeSel.value) catSel.value = r.categoryId;
+  }
+  fillCats();
+  typeSel.addEventListener('change', fillCats);
+
+  const activeSel = el('select', { class: 'input' },
+    [el('option', { value: 'yes', text: 'Active' }), el('option', { value: 'no', text: 'En pause' })]);
+  activeSel.value = (r && r.active === false) ? 'no' : 'yes';
+
+  const body = el('div', {}, [
+    field('Type', typeSel),
+    field('Montant (€)', amount),
+    field('Libellé', note),
+    field('Catégorie', catSel),
+    field('Fréquence', freqSel),
+    field('Date de début', startDate),
+    isEdit ? field('État', activeSel) : null,
+    el('p', { class: 'muted', text: 'La date de début fixe le jour d’échéance. Une date passée crée les opérations manquantes jusqu’à aujourd’hui.' }),
+    isEdit ? el('button', { type: 'button', class: 'btn danger ghost full', text: '🗑 Supprimer la récurrence',
+      onclick: () => { store.deleteRecurring(r.id); modal.close(); } }) : null,
+  ]);
+
+  const modal = openModal(isEdit ? 'Modifier la récurrence' : 'Nouvelle récurrence', body, {
+    submitLabel: isEdit ? 'Enregistrer' : 'Ajouter',
+    onSubmit: () => {
+      const val = parseFloat(String(amount.value).replace(',', '.'));
+      if (!(val > 0)) { amount.focus(); return; }
+      const payload = {
+        type: typeSel.value, amount: val, note: note.value.trim(),
+        categoryId: catSel.value || null, frequency: freqSel.value,
+        startDate: startDate.value || todayISO(),
+        active: activeSel.value !== 'no',
+      };
+      if (isEdit) store.updateRecurring(r.id, payload);
+      else store.addRecurring(payload);
+      store.generateDueRecurrings(); // rattrape immédiatement les échéances dues
       modal.close();
     },
   });
@@ -798,9 +906,19 @@ applyTheme();
 render();
 
 // Synchronisation Google Drive : mise à jour de l'indicateur + initialisation.
+// La génération des opérations récurrentes se fait APRÈS la synchro initiale
+// (pour partir des données les plus fraîches et éviter tout doublon).
 drive.onStatus(() => { updateSyncChip(); if (state.view === 'settings') { /* le statut suffit */ } });
-drive.init().then(() => { updateSyncChip(); if (state.view === 'settings') render(); });
+drive.init()
+  .catch(() => {})
+  .then(() => { store.generateDueRecurrings(); updateSyncChip(); if (state.view === 'settings') render(); });
 updateSyncChip();
+
+// Rattraper les échéances quand on revient sur l'app (utile si elle reste ouverte
+// plusieurs jours). Léger délai pour laisser la synchro récupérer d'abord le distant.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') setTimeout(() => store.generateDueRecurrings(), 2500);
+});
 
 // Enregistrement du service worker (PWA hors-ligne).
 if ('serviceWorker' in navigator) {
@@ -816,6 +934,7 @@ if (fab) {
     if (state.view === 'investments') holdingModal();
     else if (state.view === 'plan') planModal();
     else if (state.view === 'budgets') categoryModal();
+    else if (state.view === 'recurring') recurringModal();
     else txModal();
   });
 }
