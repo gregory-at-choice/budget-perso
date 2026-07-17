@@ -1,8 +1,10 @@
-// sw.js — Service worker : met l'application en cache pour un usage hors-ligne.
-// Stratégie « cache d'abord » sur la coquille de l'app ; les appels vers d'autres
-// domaines (Google : authentification et API Drive) passent directement au réseau.
+// sw.js — Service worker : usage hors-ligne SANS bloquer les mises à jour.
+// Stratégie « réseau d'abord » pour notre contenu (on voit toujours la dernière
+// version quand on est en ligne), avec repli sur le cache quand on est hors-ligne.
+// Les appels vers d'autres domaines (Google : authentification et API Drive)
+// passent directement au réseau, sans interférence.
 
-const CACHE = 'budget-perso-v3';
+const CACHE = 'budget-perso-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -39,22 +41,20 @@ self.addEventListener('fetch', (event) => {
   // (Google Identity Services, API Drive, etc.).
   if (url.origin !== self.location.origin) return;
 
+  // Réseau d'abord → mises à jour immédiates ; repli sur le cache hors-ligne.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request)
-        .then((resp) => {
-          if (resp.ok) {
-            const copy = resp.clone();
-            caches.open(CACHE).then((c) => c.put(request, copy));
-          }
-          return resp;
-        })
-        .catch(() => {
-          // Hors-ligne : pour une navigation, renvoyer la coquille de l'app.
-          if (request.mode === 'navigate') return caches.match('./index.html');
-          return new Response('', { status: 504, statusText: 'Hors-ligne' });
-        });
-    })
+    fetch(request)
+      .then((resp) => {
+        if (resp && resp.ok) {
+          const copy = resp.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy));
+        }
+        return resp;
+      })
+      .catch(() => caches.match(request).then((cached) => {
+        if (cached) return cached;
+        if (request.mode === 'navigate') return caches.match('./index.html');
+        return new Response('', { status: 504, statusText: 'Hors-ligne' });
+      }))
   );
 });
