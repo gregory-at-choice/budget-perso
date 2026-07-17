@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- Fond plein carré (le masque de la plateforme arrondira les bords) -->
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- Contenu réduit dans la zone de sécurité (~78% centré) -->
+  <g transform="translate(256 256) scale(0.66) translate(-256 -256)">
+    <g fill="#ffffff" fill-opacity="0.92">
+      <rect x="120" y="300" width="52" height="92" rx="14"/>
+      <rect x="196" y="252" width="52" height="140" rx="14"/>
+      <rect x="272" y="196" width="52" height="196" rx="14"/>
+      <rect x="348" y="140" width="52" height="252" rx="14"/>
+    </g>
+    <path d="M132 268 L232 208 L300 236 L392 150" fill="none" stroke="#ffffff" stroke-width="20"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M356 138 L400 132 L396 178 Z" fill="#ffffff"/>
+  </g>
+</svg>
