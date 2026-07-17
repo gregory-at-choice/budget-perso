@@ -227,7 +227,15 @@ button { font-family: inherit; }
 .chart-scroll { overflow-x: auto; margin: 12px 0; }
 .linechart { width: 100%; min-width: 480px; height: 220px; }
 .linechart .grid { stroke: var(--border); stroke-width: 1; }
+.linechart .grid.zero { stroke: var(--muted-strong); stroke-width: 1.5; stroke-dasharray: 3 3; }
 .linechart .axis { fill: var(--muted); font-size: 10px; }
+
+/* ---- Onglets (prévisionnel) ---- */
+.tabs { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px; gap: 3px; }
+.tab { border: none; background: transparent; color: var(--muted); padding: 7px 16px; border-radius: 999px; font-weight: 600; font-size: .9rem; cursor: pointer; }
+.tab.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+.forecast-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.forecast-controls .field { margin-bottom: 0; min-width: 150px; flex: 1; }
 
 /* ---- Formulaires / champs ---- */
 .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }

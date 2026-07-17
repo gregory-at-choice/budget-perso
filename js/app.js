@@ -11,6 +11,8 @@ import {
 const state = {
   view: 'dashboard',
   month: currentMonth(),
+  forecastTab: 'budget',   // onglet du prévisionnel : 'budget' | 'invest'
+  forecastMonths: 12,      // horizon du prévisionnel budget
 };
 
 const VIEWS = [
@@ -18,7 +20,7 @@ const VIEWS = [
   { id: 'transactions', label: 'Dépenses',        icon: '💸' },
   { id: 'budgets',     label: 'Budgets',         icon: '🎯' },
   { id: 'investments', label: 'Investissements', icon: '📈' },
-  { id: 'plan',        label: 'Plan',            icon: '🧭' },
+  { id: 'plan',        label: 'Prévisionnel',    icon: '🔮' },
   { id: 'settings',    label: 'Réglages',        icon: '⚙️' },
 ];
 
@@ -637,36 +639,188 @@ function projectPlan(p) {
   return { months, points, contribPoints, finalValue: value, contributed, gain: value - contributed };
 }
 
+// Projection mois par mois d'un plan sur un horizon commun (en mois).
+// Les versements s'arrêtent après l'horizon propre du plan ; le capital continue de croître.
+function projectPlanMonths(p, months) {
+  const r = (p.expectedReturn || 0) / 100 / 12;
+  const planMonths = (p.years || 0) * 12;
+  let value = +p.initial || 0, contributed = +p.initial || 0;
+  const vals = [value], contribs = [contributed];
+  for (let m = 1; m <= months; m++) {
+    const pmt = m <= planMonths ? (+p.amount || 0) : 0;
+    value = value * (1 + r) + pmt;
+    contributed += pmt;
+    vals.push(value); contribs.push(contributed);
+  }
+  return { vals, contribs };
+}
+
+// Libellé court d'un mois (ex. « juil. »).
+function monthShort(month) {
+  const [y, m] = month.split('-').map(Number);
+  const s = new Intl.DateTimeFormat('fr-FR', { month: 'short' }).format(new Date(y, m - 1, 1));
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function viewPlan() {
   const wrap = el('section', { class: 'view' });
   wrap.append(el('div', { class: 'view-head' }, [
-    el('h1', { text: 'Plan d’investissement' }),
+    el('h1', { text: 'Prévisionnel' }),
+    el('div', { class: 'tabs' }, [
+      el('button', { class: 'tab' + (state.forecastTab === 'budget' ? ' active' : ''), text: 'Budget',
+        onclick: () => { state.forecastTab = 'budget'; render(); } }),
+      el('button', { class: 'tab' + (state.forecastTab === 'invest' ? ' active' : ''), text: 'Investissements',
+        onclick: () => { state.forecastTab = 'invest'; render(); } }),
+    ]),
+  ]));
+  wrap.append(state.forecastTab === 'invest' ? forecastInvest() : forecastBudget());
+  return wrap;
+}
+
+// --- Prévisionnel : gestion courante (projection des budgets) --------------
+function forecastBudget() {
+  const box = el('div', { class: 'view' });
+  const cats = store.getCategories();
+  const incomeCats = cats.filter((c) => c.type === 'income' && (+c.monthlyBudget || 0) > 0);
+  const expenseCats = cats.filter((c) => c.type === 'expense' && (+c.monthlyBudget || 0) > 0);
+  const income = incomeCats.reduce((s, c) => s + (+c.monthlyBudget || 0), 0);
+  const expense = expenseCats.reduce((s, c) => s + (+c.monthlyBudget || 0), 0);
+  const net = income - expense;
+  const months = state.forecastMonths;
+  const start = +store.getSettings().forecastStart || 0;
+
+  // Paramètres
+  const horizonSel = el('select', { class: 'input' },
+    [6, 12, 24, 36].map((n) => el('option', { value: String(n), text: `${n} mois` })));
+  horizonSel.value = String(months);
+  horizonSel.addEventListener('change', () => { state.forecastMonths = parseInt(horizonSel.value) || 12; render(); });
+  const startInput = el('input', { class: 'input', type: 'number', step: '100', value: start });
+  startInput.addEventListener('change', () => { store.updateSettings({ forecastStart: parseFloat(startInput.value) || 0 }); render(); });
+  box.append(card('Paramètres', el('div', { class: 'forecast-controls' }, [
+    field('Horizon', horizonSel),
+    field('Solde de départ (€)', startInput),
+  ])));
+
+  if (income === 0 && expense === 0) {
+    box.append(el('div', { class: 'card empty-card' }, [
+      el('p', { text: 'Définis un budget mensuel sur tes catégories (revenus ET dépenses) pour projeter ton solde.' }),
+      el('button', { class: 'btn primary', text: 'Aller aux budgets', onclick: () => { state.view = 'budgets'; render(); } }),
+    ]));
+    return box;
+  }
+
+  box.append(el('div', { class: 'cards mini' }, [
+    statCard('Revenus / mois', fmtMoney(income), 'positive'),
+    statCard('Dépenses / mois', fmtMoney(expense), 'negative'),
+    statCard('Épargne / mois', fmtMoney(net, { sign: true }), net >= 0 ? 'positive' : 'negative'),
+  ]));
+
+  if (income === 0 && expense > 0) {
+    box.append(el('p', { class: 'muted', text: '💡 Astuce : définis un budget mensuel sur ta catégorie de revenu (ex. Salaire, via Budgets) pour une projection réaliste.' }));
+  }
+
+  // Courbe cumulative du solde
+  const points = [];
+  for (let m = 0; m <= months; m++) points.push({ x: m, y: start + net * m });
+  const step = Math.max(1, Math.round(months / 6));
+  const labels = points.map((pt, i) => (i % step === 0 || i === months) ? monthShort(addMonths(currentMonth(), i)) : '');
+  const endBalance = start + net * months;
+  const chart = lineChart([
+    { points, color: net >= 0 ? 'var(--positive)' : 'var(--danger)', fill: true },
+  ], { xLabels: labels, yFormat: fmtCompact });
+
+  box.append(card(`Projection du solde sur ${months} mois`, el('div', {}, [
+    el('div', { class: 'chart-scroll' }, chart),
+    el('div', { class: 'plan-summary' }, [
+      perfRow('Solde de départ', fmtMoney(start)),
+      perfRow('Épargne mensuelle', fmtMoney(net, { sign: true }), net >= 0 ? 'positive' : 'negative'),
+      perfRow(`Solde estimé dans ${months} mois`, fmtMoney(endBalance), endBalance >= start ? 'positive' : 'negative'),
+    ]),
+    net < 0 ? el('p', { class: 'negative', text: '⚠️ À ce rythme, tes dépenses dépassent tes revenus : le solde diminue.' }) : null,
+  ])));
+
+  // Projection ligne par ligne
+  const lineList = el('div', { class: 'card' });
+  lineList.append(el('div', { class: 'card-head' }, [el('h3', { text: `Projection par ligne (sur ${months} mois)` })]));
+  const rows = el('div', {});
+  [...incomeCats, ...expenseCats].forEach((c) => {
+    const total = (+c.monthlyBudget || 0) * months;
+    rows.append(el('div', { class: 'budget-row', style: 'cursor:default' }, [
+      el('div', { class: 'budget-head' }, [
+        el('span', {}, [el('span', { text: c.icon + '  ' }), el('strong', { text: c.name })]),
+        el('span', { class: c.type === 'income' ? 'positive' : 'negative',
+          text: fmtMoney(c.monthlyBudget) + '/mois → ' + fmtMoney(total) }),
+      ]),
+    ]));
+  });
+  lineList.append(rows);
+  box.append(lineList);
+  return box;
+}
+
+// --- Prévisionnel : investissements (intérêts composés) --------------------
+function forecastInvest() {
+  const box = el('div', { class: 'view' });
+  box.append(el('div', { class: 'row', style: 'justify-content:flex-end' }, [
     el('button', { class: 'btn primary', text: '＋ Nouveau plan', onclick: () => planModal() }),
   ]));
 
   const plans = store.getPlans();
   if (!plans.length) {
-    wrap.append(el('div', { class: 'card empty-card' }, [
+    box.append(el('div', { class: 'card empty-card' }, [
       el('p', { text: 'Simule la croissance d’un investissement régulier grâce aux intérêts composés.' }),
       el('button', { class: 'btn primary', text: '＋ Créer un plan', onclick: () => planModal() }),
     ]));
-    return wrap;
+    return box;
+  }
+
+  // Agrégat de tous les plans sur un horizon commun.
+  const commonYears = Math.max(...plans.map((p) => p.years || 0), 1);
+  const months = commonYears * 12;
+  const aggV = new Array(months + 1).fill(0);
+  const aggC = new Array(months + 1).fill(0);
+  plans.forEach((p) => {
+    const { vals, contribs } = projectPlanMonths(p, months);
+    for (let m = 0; m <= months; m++) { aggV[m] += vals[m]; aggC[m] += contribs[m]; }
+  });
+  const aggPoints = [], aggContrib = [], aggLabels = [];
+  for (let m = 0; m <= months; m += 3) {
+    aggPoints.push({ x: m / 12, y: aggV[m] });
+    aggContrib.push({ x: m / 12, y: aggC[m] });
+    const yy = Math.round(m / 12);
+    aggLabels.push(Math.abs(m / 12 - yy) < 1e-6 && yy > 0 && yy % 5 === 0 ? `${yy} ans` : '');
+  }
+
+  if (plans.length > 1) {
+    box.append(card('Patrimoine projeté (tous les plans)', el('div', {}, [
+      el('div', { class: 'plan-summary' }, [
+        perfRow('Total versé', fmtMoney(aggC[months])),
+        perfRow('Valeur estimée', fmtMoney(aggV[months]), 'positive'),
+        perfRow('Intérêts gagnés', fmtMoney(aggV[months] - aggC[months], { sign: true }), 'positive'),
+      ]),
+      el('div', { class: 'chart-scroll' }, lineChart([
+        { points: aggPoints, color: 'var(--accent)', fill: true },
+        { points: aggContrib, color: 'var(--muted-strong)' },
+      ], { xLabels: aggLabels })),
+      legend([
+        { label: 'Valeur projetée (avec intérêts)', color: 'var(--accent)' },
+        { label: 'Total versé (sans intérêts)', color: 'var(--muted-strong)' },
+      ]),
+    ])));
   }
 
   plans.forEach((p) => {
     const proj = projectPlan(p);
-    // Étiquettes alignées sur les points échantillonnés (pas de 3 mois) : tous les 5 ans.
     const sampledLabels = proj.points.map((pt) => {
       const yy = Math.round(pt.x);
       return Math.abs(pt.x - yy) < 0.001 && yy > 0 && yy % 5 === 0 ? `${yy} ans` : '';
     });
-
     const chart = lineChart([
       { points: proj.points, color: 'var(--accent)', fill: true },
       { points: proj.contribPoints, color: 'var(--muted-strong)' },
     ], { xLabels: sampledLabels });
 
-    wrap.append(card(p.label || 'Plan', el('div', {}, [
+    box.append(card(p.label || 'Plan', el('div', {}, [
       el('div', { class: 'plan-summary' }, [
         perfRow('Versement mensuel', fmtMoney(p.amount)),
         perfRow('Capital de départ', fmtMoney(p.initial || 0)),
@@ -687,7 +841,7 @@ function viewPlan() {
       ]),
     ])));
   });
-  return wrap;
+  return box;
 }
 
 function planModal(p) {
@@ -932,7 +1086,7 @@ const fab = document.getElementById('fab');
 if (fab) {
   fab.addEventListener('click', () => {
     if (state.view === 'investments') holdingModal();
-    else if (state.view === 'plan') planModal();
+    else if (state.view === 'plan') { if (state.forecastTab === 'invest') planModal(); else categoryModal(); }
     else if (state.view === 'budgets') categoryModal();
     else if (state.view === 'recurring') recurringModal();
     else txModal();

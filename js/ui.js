@@ -169,28 +169,38 @@ export function lineChart(series, { width = 640, height = 220, xLabels = [], yFo
   const w = width, h = height;
   const allY = series.flatMap((s) => s.points.map((p) => p.y));
   const allX = series.flatMap((s) => s.points.map((p) => p.x));
-  const maxY = Math.max(1, ...allY);
+  // Gère les valeurs négatives (ex. solde qui passe sous zéro).
+  let maxY = Math.max(0, ...allY);
+  let minY = Math.min(0, ...allY);
+  if (maxY === minY) maxY = minY + 1;
+  const range = maxY - minY;
   const maxX = Math.max(1, ...allX);
   const minX = Math.min(0, ...allX);
   const sx = (x) => padL + ((x - minX) / (maxX - minX || 1)) * (w - padL - padR);
-  const sy = (y) => h - padB - (y / maxY) * (h - padT - padB);
+  const sy = (y) => h - padB - ((y - minY) / range) * (h - padT - padB);
 
   const svg = svgEl('svg', { viewBox: `0 0 ${w} ${h}`, class: 'linechart', preserveAspectRatio: 'none' });
 
-  // Lignes de repère + graduations Y
+  // Lignes de repère + graduations Y (du max au min).
   for (let i = 0; i <= 4; i++) {
     const y = padT + (i / 4) * (h - padT - padB);
-    const val = maxY * (1 - i / 4);
+    const val = maxY - (i / 4) * range;
     svg.append(svgEl('line', { x1: padL, y1: y, x2: w - padR, y2: y, class: 'grid' }));
     const t = svgEl('text', { x: padL - 8, y: y + 4, 'text-anchor': 'end', class: 'axis' });
     t.textContent = yFormat(val);
     svg.append(t);
   }
+  // Ligne du zéro mise en évidence si des valeurs sont négatives.
+  if (minY < 0) {
+    const yz = sy(0);
+    svg.append(svgEl('line', { x1: padL, y1: yz, x2: w - padR, y2: yz, class: 'grid zero' }));
+  }
 
+  const baseY = sy(Math.max(0, minY)); // base de l'aire = zéro (ou le bas si tout positif)
   series.forEach((s) => {
     const d = s.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${sx(p.x)} ${sy(p.y)}`).join(' ');
     if (s.fill) {
-      const area = `${d} L ${sx(s.points[s.points.length - 1].x)} ${sy(0)} L ${sx(s.points[0].x)} ${sy(0)} Z`;
+      const area = `${d} L ${sx(s.points[s.points.length - 1].x)} ${baseY} L ${sx(s.points[0].x)} ${baseY} Z`;
       svg.append(svgEl('path', { d: area, fill: s.color, 'fill-opacity': 0.12, stroke: 'none' }));
     }
     svg.append(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2.5, 'stroke-linejoin': 'round' }));

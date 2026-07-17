@@ -357,7 +357,7 @@ export function loadDemo() {
   const day = (month, d2) => `${month}-${String(d2).padStart(2, '0')}`;
 
   d.categories.forEach((c) => {
-    const budgets = { Logement: 1100, Courses: 450, Restaurants: 200, Transports: 150, Loisirs: 150, Abonnements: 60, Santé: 80, Épargne: 500 };
+    const budgets = { Salaire: 3200, Logement: 1100, Courses: 450, Restaurants: 200, Transports: 150, Loisirs: 150, Abonnements: 60, Santé: 80, Épargne: 500 };
     if (budgets[c.name]) c.monthlyBudget = budgets[c.name];
   });
 
