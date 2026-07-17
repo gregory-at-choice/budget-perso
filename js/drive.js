@@ -241,6 +241,9 @@ export async function init() {
   }
   if (!isConfigured()) { setStatus('disabled'); return; }
   setStatus('disconnected');
+  // Précharger la bibliothèque Google pour que le clic « Se connecter » ouvre la
+  // fenêtre immédiatement (sinon le navigateur peut bloquer la pop-up).
+  ensureTokenClient().catch(() => {});
   // Reconnexion silencieuse si l'utilisateur s'était déjà connecté.
   if (localStorage.getItem(LS_CONNECTED) === '1') {
     try { await connect({ silent: true }); }

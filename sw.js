@@ -2,7 +2,7 @@
 // Stratégie « cache d'abord » sur la coquille de l'app ; les appels vers d'autres
 // domaines (Google : authentification et API Drive) passent directement au réseau.
 
-const CACHE = 'budget-perso-v2';
+const CACHE = 'budget-perso-v3';
 const ASSETS = [
   './',
   './index.html',

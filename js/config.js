@@ -8,4 +8,4 @@
 //
 // Tu peux aussi le renseigner directement depuis l'app (Réglages → Synchronisation
 // Google Drive → Réglage avancé), sans modifier ce fichier.
-export const GOOGLE_CLIENT_ID = '';
+export const GOOGLE_CLIENT_ID = '419396679891-k9k63unegm2aj214iqn8rks91i2c27b3.apps.googleusercontent.com';
