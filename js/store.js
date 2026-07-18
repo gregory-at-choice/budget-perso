@@ -195,6 +195,48 @@ export function transactionsForMonth(month) {
     .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 }
 
+// --- Budgets « enveloppe » : report du reliquat -------------------------
+function addMonthStr(month, delta) {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Premier mois où une transaction existe (origine du cumul).
+function earliestTxMonth() {
+  let min = null;
+  for (const t of data.transactions) {
+    const m = (t.date || '').slice(0, 7);
+    if (m && (!min || m < min)) min = m;
+  }
+  return min;
+}
+
+// Dépenses d'une catégorie sur un mois donné.
+export function categoryMonthSpent(catId, month) {
+  let s = 0;
+  for (const t of data.transactions) {
+    if (t.type === 'expense' && t.categoryId === catId && (t.date || '').slice(0, 7) === month) s += +t.amount || 0;
+  }
+  return s;
+}
+
+// Report cumulé (reliquat) d'une catégorie AVANT le mois donné :
+// somme, sur chaque mois écoulé depuis l'origine, de (budget − dépensé).
+// Positif = épargne reportée ; négatif = dépassements cumulés.
+export function categoryRollover(catId, month) {
+  const cat = getCategory(catId);
+  const base = +cat?.monthlyBudget || 0;
+  if (!cat || base <= 0) return 0;
+  const origin = earliestTxMonth();
+  if (!origin || month <= origin) return 0;
+  let roll = 0, guard = 0;
+  for (let m = origin; m < month && guard < 1200; m = addMonthStr(m, 1), guard++) {
+    roll += base - categoryMonthSpent(catId, m);
+  }
+  return roll;
+}
+
 // --- Opérations récurrentes ----------------------------------------------
 // Un modèle récurrent génère automatiquement des transactions à échéance
 // (loyer, abonnements, salaire…). frequency : 'monthly' | 'weekly' | 'yearly'.

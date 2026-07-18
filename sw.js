@@ -4,7 +4,7 @@
 // Les appels vers d'autres domaines (Google : authentification et API Drive)
 // passent directement au réseau, sans interférence.
 
-const CACHE = 'budget-perso-v8';
+const CACHE = 'budget-perso-v9';
 const ASSETS = [
   './',
   './index.html',

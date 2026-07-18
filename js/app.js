@@ -152,7 +152,12 @@ function viewDashboard() {
 
   // Répartition des dépenses (donut) + budget global
   const byCat = expenseByCategory(state.month);
-  const budgetTotal = store.getCategories().filter((c) => c.type === 'expense').reduce((s, c) => s + (+c.monthlyBudget || 0), 0);
+  const rolloverOn = store.getSettings().budgetRollover !== false;
+  const budgetTotal = store.getCategories().filter((c) => c.type === 'expense').reduce((s, c) => {
+    const base = +c.monthlyBudget || 0;
+    if (base <= 0) return s;
+    return s + base + (rolloverOn ? store.categoryRollover(c.id, state.month) : 0);
+  }, 0);
 
   const donutCard = card('Répartition des dépenses', el('div', { class: 'donut-row' }, [
     byCat.length
@@ -467,9 +472,19 @@ function recurringModal(r) {
 // =========================================================================
 function viewBudgets() {
   const wrap = el('section', { class: 'view' });
+  const rolloverOn = store.getSettings().budgetRollover !== false;
+
   wrap.append(el('div', { class: 'view-head' }, [
     el('h1', { text: 'Budgets mensuels' }),
-    el('button', { class: 'btn', text: '＋ Catégorie', onclick: () => categoryModal() }),
+    el('div', { class: 'row' }, [
+      el('button', {
+        class: 'btn small' + (rolloverOn ? ' primary' : ' ghost'),
+        text: rolloverOn ? '🔄 Report : activé' : '🔄 Report : désactivé',
+        title: 'Reporter le reliquat non dépensé sur les mois suivants',
+        onclick: () => store.updateSettings({ budgetRollover: !rolloverOn }),
+      }),
+      el('button', { class: 'btn', text: '＋ Catégorie', onclick: () => categoryModal() }),
+    ]),
   ]));
 
   const spent = new Map();
@@ -478,28 +493,44 @@ function viewBudgets() {
   });
 
   const expCats = store.getCategories().filter((c) => c.type === 'expense');
-  const totalBudget = expCats.reduce((s, c) => s + (+c.monthlyBudget || 0), 0);
-  const totalSpent = [...spent.values()].reduce((s, v) => s + v, 0);
+  let totalSpent = 0, totalAvailable = 0;
+  const rows = expCats.map((c) => {
+    const base = +c.monthlyBudget || 0;
+    const used = spent.get(c.id) || 0;
+    const roll = (rolloverOn && base > 0) ? store.categoryRollover(c.id, state.month) : 0;
+    const available = base + roll;
+    totalSpent += used;
+    if (base > 0) totalAvailable += available;
+    return { c, base, used, roll, available };
+  });
 
-  wrap.append(card('Vue d’ensemble', progressRow('Total dépensé', totalSpent, totalBudget || totalSpent)));
+  wrap.append(card('Vue d’ensemble', progressRow('Total dépensé', totalSpent, totalAvailable || totalSpent)));
 
   const list = el('div', { class: 'card' });
-  expCats.forEach((c) => {
-    const used = spent.get(c.id) || 0;
-    const budget = +c.monthlyBudget || 0;
+  rows.forEach(({ c, base, used, roll, available }) => {
+    const over = base > 0 && used > available;
+    const pct = available > 0 ? Math.min(100, (used / available) * 100) : (used > 0 ? 100 : 0);
+    const rightText = base > 0 ? `${fmtMoney(used)} / ${fmtMoney(available)}` : fmtMoney(used) + ' (pas de budget)';
+    const rollNote = (base > 0 && roll !== 0)
+      ? el('div', { class: 'budget-roll ' + (roll >= 0 ? 'positive' : 'negative'),
+          text: (roll >= 0 ? 'dont + ' : 'dont − ') + fmtMoney(Math.abs(roll)) + ' reporté' + (roll >= 0 ? '' : ' (dépassement)') })
+      : null;
     list.append(el('div', { class: 'budget-row', onclick: () => categoryModal(c) }, [
       el('div', { class: 'budget-head' }, [
         el('span', {}, [el('span', { text: c.icon + '  ' }), el('strong', { text: c.name })]),
-        el('span', { class: used > budget && budget > 0 ? 'negative' : 'muted',
-          text: budget > 0 ? `${fmtMoney(used)} / ${fmtMoney(budget)}` : fmtMoney(used) + ' (pas de budget)' }),
+        el('span', { class: over ? 'negative' : 'muted', text: rightText }),
       ]),
-      budget > 0 ? el('div', { class: 'progress' }, [
-        el('div', { class: 'progress-fill' + (used > budget ? ' over' : ''),
-          style: `width:${Math.min(100, (used / budget) * 100)}%;background:${c.color}` }),
+      base > 0 ? el('div', { class: 'progress' }, [
+        el('div', { class: 'progress-fill' + (over ? ' over' : ''), style: `width:${pct}%;background:${c.color}` }),
       ]) : null,
+      rollNote,
     ]));
   });
   wrap.append(list);
+
+  if (rolloverOn) {
+    wrap.append(el('p', { class: 'footnote', text: 'Report activé : le budget non dépensé un mois s’ajoute au budget du mois suivant (et se cumule). Un dépassement se déduit des mois suivants.' }));
+  }
   return wrap;
 }
 

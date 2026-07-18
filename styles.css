@@ -194,6 +194,7 @@ button { font-family: inherit; }
 .budget-row:hover { background: var(--surface-2); }
 .budget-row + .budget-row { border-top: 1px solid var(--border); }
 .budget-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+.budget-roll { font-size: .78rem; margin-top: 5px; }
 
 /* ---- Performance / plan ---- */
 .perf, .plan-summary { display: flex; flex-direction: column; gap: 8px; }
