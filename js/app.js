@@ -855,7 +855,7 @@ function forecastInvest() {
       el('div', { class: 'plan-summary' }, [
         perfRow('Versement mensuel', fmtMoney(p.amount)),
         perfRow('Capital de départ', fmtMoney(p.initial || 0)),
-        perfRow('Rendement annuel visé', (p.expectedReturn || 0) + ' %'),
+        perfRow('Rendement annuel visé', String(p.expectedReturn || 0).replace('.', ',') + ' %'),
         perfRow('Horizon', (p.years || 0) + ' ans'),
         el('hr', {}),
         perfRow('Total versé', fmtMoney(proj.contributed)),
@@ -880,7 +880,7 @@ function planModal(p) {
   const label = el('input', { class: 'input', type: 'text', value: p?.label || '', placeholder: 'Ex. Versement PEA' });
   const amount = el('input', { class: 'input', type: 'number', step: '10', min: '0', value: p?.amount ?? 300 });
   const initial = el('input', { class: 'input', type: 'number', step: '100', min: '0', value: p?.initial ?? 0 });
-  const ret = el('input', { class: 'input', type: 'number', step: '0.5', min: '0', value: p?.expectedReturn ?? 6 });
+  const ret = el('input', { class: 'input', type: 'number', step: '0.01', min: '0', inputmode: 'decimal', value: p?.expectedReturn ?? 6 });
   const years = el('input', { class: 'input', type: 'number', step: '1', min: '1', max: '60', value: p?.years ?? 20 });
 
   const body = el('div', {}, [
@@ -897,9 +897,9 @@ function planModal(p) {
     onSubmit: () => {
       const payload = {
         label: label.value.trim() || 'Plan',
-        amount: parseFloat(amount.value) || 0,
-        initial: parseFloat(initial.value) || 0,
-        expectedReturn: parseFloat(ret.value) || 0,
+        amount: parseFloat(String(amount.value).replace(',', '.')) || 0,
+        initial: parseFloat(String(initial.value).replace(',', '.')) || 0,
+        expectedReturn: parseFloat(String(ret.value).replace(',', '.')) || 0,
         years: parseInt(years.value) || 1,
       };
       if (isEdit) store.updatePlan(p.id, payload); else store.addPlan(payload);
